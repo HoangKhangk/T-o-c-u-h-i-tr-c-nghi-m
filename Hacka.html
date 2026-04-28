@@ -1,0 +1,290 @@
+<!DOCTYPE html>
+<html lang="vi">
+
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Hacka – Tạo đề trắc nghiệm</title>
+  <link
+    href="https://fonts.googleapis.com/css2?family=Be+Vietnam+Pro:wght@300;400;500;600;700;800&family=Sora:wght@400;600;700&display=swap"
+    rel="stylesheet">
+  <link rel="stylesheet" href="css/style.css">
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/mammoth/1.6.0/mammoth.browser.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
+  <script src="https://unpkg.com/lucide@latest"></script>
+</head>
+
+<body>
+
+  <header>
+    <div class="logo"><i data-lucide="pencil-line"></i> Hacka<span>.com</span></div>
+    <nav>
+      <button class="nav-btn active" data-page="home" onclick="showPage('home')"><i data-lucide="house"></i> Trang chủ</button>
+      <button class="nav-btn" data-page="create" onclick="showPage('create')"><i data-lucide="file-pen"></i> Tạo đề</button>
+      <button class="nav-btn" data-page="library" onclick="showPage('library')"><i data-lucide="library"></i> Thư viện</button>
+    </nav>
+  </header>
+
+  <main>
+
+    <!-- HOME -->
+    <div class="page active" id="page-home">
+      <div class="hero">
+        <h1>Tạo đề <span>trắc nghiệm</span><br>phờ riiii</h1>
+        <p>Upload file Word/TXT hoặc nhập tay — tạo đề, chia sẻ và chấm điểm ngay trên trình duyệt</p>
+        <button class="btn btn-primary" onclick="showPage('create')" style="font-size:1rem;padding:12px 28px;">
+          <i data-lucide="plus-circle"></i> Tạo đề mới
+        </button>
+      </div>
+      <div class="hero-cards">
+        <div class="hero-card" onclick="showPage('create')">
+          <div class="icon"><i data-lucide="upload-cloud"></i></div>
+          <h3>Upload tệp</h3>
+          <p>Import câu hỏi từ file .txt hoặc .docx theo định dạng chuẩn</p>
+        </div>
+        <div class="hero-card" onclick="showPage('create')">
+          <div class="icon"><i data-lucide="pen-line"></i></div>
+          <h3>Nhập tay</h3>
+          <p>Tạo từng câu hỏi bằng giao diện trực quan, dễ dùng</p>
+        </div>
+        <div class="hero-card" onclick="showPage('library')">
+          <div class="icon"><i data-lucide="folder-open"></i></div>
+          <h3>Thư viện đề</h3>
+          <p>Quản lý, chia sẻ và làm lại các đề đã tạo</p>
+        </div>
+      </div>
+    </div>
+
+    <!-- CREATE -->
+    <div class="page" id="page-create">
+      <div class="sec-header">
+        <h2><i data-lucide="file-pen"></i> Tạo đề trắc nghiệm</h2>
+        <div style="display:flex;gap:8px;">
+          <button class="btn btn-ghost btn-sm" onclick="clearQuestions()"><i data-lucide="trash-2"></i> Xóa hết</button>
+          <button class="btn btn-primary btn-sm" onclick="saveQuiz()"><i data-lucide="save"></i> Lưu đề</button>
+        </div>
+      </div>
+
+      <!-- Quiz info -->
+      <div
+        style="background:var(--card);border:1px solid var(--border);border-radius:14px;padding:20px;margin-bottom:24px;">
+        <div class="form-row">
+          <div class="form-group">
+            <label>Tên đề thi</label>
+            <input class="form-input" id="quiz-title" placeholder="VD: Kiểm tra Toán 12 – Chương 1">
+          </div>
+          <div class="form-group">
+            <label>Môn học</label>
+            <input class="form-input" id="quiz-subject" placeholder="VD: Toán, Lý, Hóa...">
+          </div>
+        </div>
+        <div class="form-row">
+          <div class="form-group">
+            <label>Thời gian làm bài (phút)</label>
+            <input class="form-input" id="quiz-time" type="number" min="1" value="30">
+          </div>
+          <div class="form-group">
+            <label>Mô tả / Ghi chú</label>
+            <input class="form-input" id="quiz-desc" placeholder="Không bắt buộc">
+          </div>
+        </div>
+      </div>
+
+      <!-- Upload zone -->
+      <div class="tab-row">
+        <button class="tab active" onclick="switchTab('upload')"><i data-lucide="upload-cloud"></i> Upload file</button>
+        <button class="tab" onclick="switchTab('manual')"><i data-lucide="pencil"></i> Nhập thủ công</button>
+      </div>
+
+      <div id="tab-upload">
+        <div class="upload-zone" id="dropZone">
+          <input type="file" accept=".txt,.docx,.doc" id="fileInput" onchange="handleFile(event)">
+          <div class="upload-icon" id="upload-icon"><i data-lucide="file-text"></i></div>
+          <h3 id="upload-title">Kéo thả file vào đây hoặc <span
+              style="color:var(--accent);text-decoration:underline;">click để chọn</span></h3>
+          <p style="margin-top:6px;" id="upload-sub">Hỗ trợ <strong>.txt</strong> và <strong>.docx</strong> (Word) — xem
+            định dạng bên dưới</p>
+        </div>
+
+        <!-- Upload result feedback -->
+        <div id="upload-feedback"
+          style="display:none;margin-top:14px;padding:14px 18px;border-radius:10px;font-size:.88rem;display:none;align-items:center;gap:12px;">
+        </div>
+
+        <div
+          style="margin-top:14px;background:var(--card);border:1px solid var(--border);border-radius:10px;padding:16px;font-size:.82rem;color:var(--muted);line-height:2;">
+          <strong style="color:var(--text);font-size:.85rem;display:inline-flex;align-items:center;gap:6px;"><i data-lucide="clipboard-list" style="width:15px;height:15px;"></i> Định dạng file .txt (mỗi câu cách nhau 1 dòng trống):</strong><br>
+          <code style="color:var(--accent2)">Câu 1: Thủ đô Việt Nam là?</code><br>
+          <code>A. Hà Nội</code><br>
+          <code>B. Hồ Chí Minh</code><br>
+          <code>C. Đà Nẵng</code><br>
+          <code>D. Huế</code><br>
+          <code style="color:var(--success)">ĐA: A</code><br><br>
+          <code style="color:var(--accent2)">Câu 2: ...</code>
+          <div style="margin-top:10px;padding:10px;background:var(--surface);border-radius:8px;">
+            <i data-lucide="lightbulb" style="width:14px;height:14px;vertical-align:middle;color:var(--accent3);"></i> <strong style="color:var(--text)">Mẹo:</strong> Tải file mẫu để xem đúng định dạng
+            <button class="btn btn-ghost btn-sm" onclick="downloadSample()" style="margin-left:8px;"><i data-lucide="download"></i> File mẫu .txt</button>
+          </div>
+        </div>
+      </div>
+
+      <div id="tab-manual" style="display:none;">
+        <div class="q-list" id="questionList"></div>
+        <button class="btn btn-ghost" onclick="addQuestion()"
+          style="margin-top:14px;width:100%;justify-content:center;">
+          <i data-lucide="plus-circle"></i> Thêm câu hỏi
+        </button>
+      </div>
+
+      <div id="parsed-preview" style="display:none;margin-top:20px;">
+        <div class="sec-header">
+          <h2 id="parsed-count"></h2>
+          <button class="btn btn-ghost btn-sm" onclick="editParsed()"><i data-lucide="edit-2"></i> Chỉnh sửa</button>
+        </div>
+        <div class="q-list" id="parsedList"></div>
+      </div>
+    </div>
+
+    <!-- LIBRARY -->
+    <div class="page" id="page-library">
+      <div class="sec-header">
+        <h2><i data-lucide="library"></i> Thư viện đề thi</h2>
+        <button class="btn btn-primary btn-sm" onclick="showPage('create')"><i data-lucide="plus"></i> Tạo mới</button>
+      </div>
+      <div class="quiz-grid" id="quizGrid"></div>
+      <div class="empty" id="library-empty" style="display:none;">
+        <div class="empty-icon"><i data-lucide="inbox"></i></div>
+        <p>Chưa có đề nào. Hãy tạo đề đầu tiên!</p>
+      </div>
+    </div>
+
+    <!-- TAKE QUIZ -->
+    <div class="page" id="page-take">
+      <div class="quiz-header-info">
+        <div>
+          <div style="font-size:.78rem;color:var(--muted);margin-bottom:4px;" id="take-subject"></div>
+          <div style="font-weight:700;font-size:1rem;" id="take-title"></div>
+          <div id="shuffle-indicator" style="display:none;align-items:center;gap:5px;margin-top:6px;font-size:.72rem;color:var(--accent3);background:rgba(245,166,35,.12);padding:3px 10px;border-radius:20px;border:1px solid rgba(245,166,35,.3);width:fit-content;">
+            <i data-lucide="shuffle" style="width:12px;height:12px;"></i> Đảo ngẫu nhiên
+          </div>
+        </div>
+        <div class="progress-bar-wrap">
+          <div class="progress-bar-track">
+            <div class="progress-bar-fill" id="progress-fill" style="width:0%"></div>
+          </div>
+          <div class="progress-label" id="progress-label">0 / 0</div>
+        </div>
+        <div class="timer" id="timer-display">00:00</div>
+      </div>
+      <div id="take-questions"></div>
+      <div style="display:flex;justify-content:center;margin-top:8px;">
+        <button class="btn btn-success" style="font-size:1rem;padding:13px 36px;" onclick="submitQuiz()"><i data-lucide="send"></i> Nộp bài</button>
+      </div>
+    </div>
+
+    <!-- RESULT -->
+    <div class="page" id="page-result">
+      <div class="result-hero">
+        <div class="score-ring" id="scoreRing"><span id="scorePct">0%</span></div>
+        <h2 id="result-title" style="font-family:'Sora',sans-serif;font-size:1.4rem;"></h2>
+        <p id="result-msg" style="color:var(--muted);margin-top:6px;"></p>
+      </div>
+      <div class="result-stats">
+        <div class="stat-box">
+          <div class="val" id="r-correct" style="color:var(--success)">0</div>
+          <div class="lbl">Câu đúng</div>
+        </div>
+        <div class="stat-box">
+          <div class="val" id="r-wrong" style="color:var(--danger)">0</div>
+          <div class="lbl">Câu sai</div>
+        </div>
+        <div class="stat-box">
+          <div class="val" id="r-time" style="color:var(--accent2)">0:00</div>
+          <div class="lbl">Thời gian</div>
+        </div>
+      </div>
+      <div style="display:flex;gap:10px;justify-content:center;margin-bottom:28px;">
+        <button class="btn btn-ghost" onclick="showPage('library')"><i data-lucide="arrow-left"></i> Thư viện</button>
+        <button class="btn btn-primary" onclick="retakeQuiz()"><i data-lucide="rotate-ccw"></i> Làm lại</button>
+      </div>
+      <h3 style="font-family:'Sora',sans-serif;margin-bottom:16px;">Xem lại đáp án</h3>
+      <div id="review-list"></div>
+    </div>
+
+    <!-- SHARE WELCOME -->
+    <div class="page" id="page-share">
+      <div class="share-welcome">
+        <div class="share-badge"><i data-lucide="link-2"></i> Đề thi được chia sẻ</div>
+        <h1 id="share-title"></h1>
+        <div id="share-subject-badge"></div>
+        <div class="share-meta" id="share-meta"></div>
+        <p id="share-desc-text"></p>
+        <div class="share-actions">
+          <button class="btn btn-primary" style="font-size:1rem;padding:13px 32px;" onclick="startSharedQuiz(false)">
+            <i data-lucide="play"></i> Bắt đầu làm bài
+          </button>
+          <button class="btn btn-ghost" style="font-size:1rem;padding:13px 32px;" onclick="startSharedQuiz(true)">
+            <i data-lucide="shuffle"></i> Đảo ngẫu nhiên
+          </button>
+        </div>
+        <div style="margin-top:20px;padding-top:20px;border-top:1px solid var(--border);">
+          <button class="btn btn-ghost btn-sm" id="save-shared-btn" onclick="saveSharedQuiz()">
+            <i data-lucide="bookmark-plus"></i> Lưu vào thư viện của tôi
+          </button>
+        </div>
+      </div>
+    </div>
+
+  </main>
+
+  <!-- Mobile bottom navigation -->
+  <nav class="mobile-nav">
+    <button class="nav-btn" data-page="home" onclick="showPage('home')">
+      <i data-lucide="house"></i><span>Trang chủ</span>
+    </button>
+    <button class="nav-btn" data-page="create" onclick="showPage('create')">
+      <i data-lucide="file-pen"></i><span>Tạo đề</span>
+    </button>
+    <button class="nav-btn" data-page="library" onclick="showPage('library')">
+      <i data-lucide="library"></i><span>Thư viện</span>
+    </button>
+  </nav>
+
+  <div id="toast"></div>
+
+  <!-- Share link modal -->
+  <div class="modal-overlay" id="shareModal">
+    <div class="modal">
+      <div style="display:flex;align-items:center;gap:10px;margin-bottom:8px;">
+        <i data-lucide="share-2" style="color:var(--accent);width:20px;height:20px;flex-shrink:0;"></i>
+        <h3 style="margin:0;">Chia sẻ đề thi</h3>
+      </div>
+      <p style="color:var(--muted);font-size:.84rem;margin-bottom:16px;">Ai có link này đều có thể vào làm bài ngay, không cần đăng ký tài khoản.</p>
+      <div style="display:flex;gap:8px;">
+        <input class="form-input" id="share-link-input" readonly style="flex:1;font-size:.75rem;color:var(--muted);cursor:text;">
+        <button class="btn btn-primary btn-sm" id="copy-link-btn" onclick="copyShareLinkModal()">
+          <i data-lucide="copy"></i> Sao chép
+        </button>
+      </div>
+      <div class="modal-actions" style="margin-top:14px;">
+        <button class="btn btn-ghost btn-sm" onclick="closeShareModal()">Đóng</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Confirm modal -->
+  <div class="modal-overlay" id="confirmModal">
+    <div class="modal">
+      <h3 id="modal-title">Xác nhận</h3>
+      <p id="modal-body" style="color:var(--muted);font-size:.88rem;"></p>
+      <div class="modal-actions">
+        <button class="btn btn-ghost btn-sm" onclick="closeModal()">Hủy</button>
+        <button class="btn btn-danger btn-sm" id="modal-confirm-btn">Xác nhận</button>
+      </div>
+    </div>
+  </div>
+
+  <script src="js/script.js"></script>
+</body>
+
+</html>
