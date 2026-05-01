@@ -12,6 +12,7 @@
   <script src="https://cdnjs.cloudflare.com/ajax/libs/mammoth/1.6.0/mammoth.browser.min.js"></script>
   <script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
   <script src="https://unpkg.com/lucide@latest"></script>
+  <script src="https://cdn.jsdelivr.net/npm/lz-string@1.5.0/libs/lz-string.min.js"></script>
 </head>
 
 <body>
@@ -98,7 +99,7 @@
 
       <div id="tab-upload">
         <div class="upload-zone" id="dropZone">
-          <input type="file" accept=".txt,.docx,.doc" id="fileInput" onchange="handleFile(event)">
+          <input type="file" accept=".txt,.docx,.doc,text/plain,application/vnd.openxmlformats-officedocument.wordprocessingml.document,application/msword" id="fileInput" onchange="handleFile(event)">
           <div class="upload-icon" id="upload-icon"><i data-lucide="file-text"></i></div>
           <h3 id="upload-title">Kéo thả file vào đây hoặc <span
               style="color:var(--accent);text-decoration:underline;">click để chọn</span></h3>

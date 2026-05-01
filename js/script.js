@@ -35,19 +35,59 @@ function shuffleQuiz(quiz) {
 }
 
 // ─── SHARE ───────────────────────────────────────────
+function minifyQuiz(quiz) {
+    return {
+        i: quiz.id,
+        t: quiz.title,
+        s: quiz.subject || '',
+        m: quiz.time,
+        d: quiz.desc || '',
+        q: quiz.questions.map(q => [q.text, q.choices, q.correct])
+    };
+}
+
+function expandQuiz(mini) {
+    return {
+        id: mini.i,
+        title: mini.t,
+        subject: mini.s || '',
+        time: mini.m,
+        desc: mini.d || '',
+        questions: mini.q.map((q, i) => ({
+            id: i,
+            text: q[0],
+            choices: q[1],
+            correct: q[2]
+        }))
+    };
+}
+
 function encodeQuizForShare(quiz) {
     try {
-        const json = JSON.stringify(quiz);
-        const b64 = btoa(unescape(encodeURIComponent(json)));
-        return b64.replace(/\+/g, '-').replace(/\//g, '_').replace(/=/g, '');
+        const json = JSON.stringify(minifyQuiz(quiz));
+        const compressed = LZString.compressToBase64(json);
+        return compressed.replace(/\+/g, '-').replace(/\//g, '_').replace(/=/g, '');
     } catch (e) { return null; }
 }
 
 function decodeQuizFromShare(str) {
+    let b64 = str.replace(/-/g, '+').replace(/_/g, '/');
+    while (b64.length % 4) b64 += '=';
     try {
-        str = str.replace(/-/g, '+').replace(/_/g, '/');
-        while (str.length % 4) str += '=';
-        return JSON.parse(decodeURIComponent(escape(atob(str))));
+        const json = LZString.decompressFromBase64(b64);
+        if (json) {
+            const parsed = JSON.parse(json);
+            if (parsed) {
+                // Minified format: has q array of arrays
+                if (Array.isArray(parsed.q)) return expandQuiz(parsed);
+                // Old LZ format: full object
+                if (parsed.questions) return parsed;
+            }
+        }
+    } catch (e) {}
+    // Fallback: old plain base64 links
+    try {
+        return JSON.parse(decodeURIComponent(escape(atob(b64))));
     } catch (e) { return null; }
 }
 
@@ -57,16 +97,34 @@ function getShareLink(quiz) {
     return window.location.href.split('#')[0] + '#q=' + encoded;
 }
 
-function openShareModal(id, e) {
+async function shortenUrl(longUrl) {
+    try {
+        const res = await fetch('https://is.gd/create.php?format=json&url=' + encodeURIComponent(longUrl));
+        if (!res.ok) return null;
+        const data = await res.json();
+        return data.shorturl || null;
+    } catch (e) { return null; }
+}
+
+async function openShareModal(id, e) {
     if (e) e.stopPropagation();
     const quiz = quizzes.find(q => q.id === id);
     if (!quiz) return;
     const link = getShareLink(quiz);
     if (!link) { showToast('Không thể tạo link!', true); return; }
-    document.getElementById('share-link-input').value = link;
+
+    const input = document.getElementById('share-link-input');
     const btn = document.getElementById('copy-link-btn');
-    btn.innerHTML = '<i data-lucide="copy"></i> Sao chép';
+    input.value = 'Đang rút gọn link...';
+    btn.innerHTML = '<i data-lucide="loader-circle"></i> Chờ chút...';
+    btn.disabled = true;
     document.getElementById('shareModal').classList.add('open');
+    lucide.createIcons();
+
+    const shortLink = await shortenUrl(link);
+    input.value = shortLink || link;
+    btn.innerHTML = '<i data-lucide="copy"></i> Sao chép';
+    btn.disabled = false;
     lucide.createIcons();
 }
 
