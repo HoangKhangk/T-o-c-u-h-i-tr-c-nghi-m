@@ -18,12 +18,34 @@
 <body>
 
   <header>
-    <div class="logo"><i data-lucide="pencil-line"></i> Hacka<span>.com</span></div>
+    <div class="logo"><i data-lucide="pencil-line"></i> Hacka<span>.haha</span></div>
     <nav>
-      <button class="nav-btn active" data-page="home" onclick="showPage('home')"><i data-lucide="house"></i> Trang chủ</button>
-      <button class="nav-btn" data-page="create" onclick="showPage('create')"><i data-lucide="file-pen"></i> Tạo đề</button>
-      <button class="nav-btn" data-page="library" onclick="showPage('library')"><i data-lucide="library"></i> Thư viện</button>
+      <button class="nav-btn active" data-page="home" onclick="showPage('home')"><i data-lucide="house"></i> Trang
+        chủ</button>
+      <button class="nav-btn" data-page="create" onclick="showPage('create')"><i data-lucide="file-pen"></i> Tạo
+        đề</button>
+      <button class="nav-btn" data-page="library" onclick="showPage('library')"><i data-lucide="library"></i> Thư
+        viện</button>
     </nav>
+    <!-- Auth area -->
+    <div class="auth-area">
+      <button class="btn btn-primary btn-sm" id="btn-login" onclick="openAuthModal('login')">
+        <i data-lucide="log-in"></i><span class="btn-login-text"> Đăng nhập</span>
+      </button>
+      <div class="user-menu" id="user-menu" style="display:none;">
+        <button class="user-avatar" id="user-avatar-btn" onclick="toggleUserDropdown()">
+          <span id="user-initial"></span>
+        </button>
+        <div class="user-dropdown" id="user-dropdown">
+          <div class="user-dropdown-name" id="user-dropdown-name"></div>
+          <div class="user-dropdown-email" id="user-dropdown-email"></div>
+          <hr style="border-color:var(--border);margin:8px 0;">
+          <button class="user-dropdown-item" onclick="logout()">
+            <i data-lucide="log-out"></i> Đăng xuất
+          </button>
+        </div>
+      </div>
+    </div>
   </header>
 
   <main>
@@ -99,7 +121,9 @@
 
       <div id="tab-upload">
         <div class="upload-zone" id="dropZone">
-          <input type="file" accept=".txt,.docx,.doc,text/plain,application/vnd.openxmlformats-officedocument.wordprocessingml.document,application/msword" id="fileInput" onchange="handleFile(event)">
+          <input type="file"
+            accept=".txt,.docx,.doc,text/plain,application/vnd.openxmlformats-officedocument.wordprocessingml.document,application/msword"
+            id="fileInput" onchange="handleFile(event)">
           <div class="upload-icon" id="upload-icon"><i data-lucide="file-text"></i></div>
           <h3 id="upload-title">Kéo thả file vào đây hoặc <span
               style="color:var(--accent);text-decoration:underline;">click để chọn</span></h3>
@@ -114,7 +138,9 @@
 
         <div
           style="margin-top:14px;background:var(--card);border:1px solid var(--border);border-radius:10px;padding:16px;font-size:.82rem;color:var(--muted);line-height:2;">
-          <strong style="color:var(--text);font-size:.85rem;display:inline-flex;align-items:center;gap:6px;"><i data-lucide="clipboard-list" style="width:15px;height:15px;"></i> Định dạng file .txt (mỗi câu cách nhau 1 dòng trống):</strong><br>
+          <strong style="color:var(--text);font-size:.85rem;display:inline-flex;align-items:center;gap:6px;"><i
+              data-lucide="clipboard-list" style="width:15px;height:15px;"></i> Định dạng file .txt (mỗi câu cách nhau 1
+            dòng trống):</strong><br>
           <code style="color:var(--accent2)">Câu 1: Thủ đô Việt Nam là?</code><br>
           <code>A. Hà Nội</code><br>
           <code>B. Hồ Chí Minh</code><br>
@@ -123,8 +149,10 @@
           <code style="color:var(--success)">ĐA: A</code><br><br>
           <code style="color:var(--accent2)">Câu 2: ...</code>
           <div style="margin-top:10px;padding:10px;background:var(--surface);border-radius:8px;">
-            <i data-lucide="lightbulb" style="width:14px;height:14px;vertical-align:middle;color:var(--accent3);"></i> <strong style="color:var(--text)">Mẹo:</strong> Tải file mẫu để xem đúng định dạng
-            <button class="btn btn-ghost btn-sm" onclick="downloadSample()" style="margin-left:8px;"><i data-lucide="download"></i> File mẫu .txt</button>
+            <i data-lucide="lightbulb" style="width:14px;height:14px;vertical-align:middle;color:var(--accent3);"></i>
+            <strong style="color:var(--text)">Mẹo:</strong> Tải file mẫu để xem đúng định dạng
+            <button class="btn btn-ghost btn-sm" onclick="downloadSample()" style="margin-left:8px;"><i
+                data-lucide="download"></i> File mẫu .txt</button>
           </div>
         </div>
       </div>
@@ -165,7 +193,8 @@
         <div>
           <div style="font-size:.78rem;color:var(--muted);margin-bottom:4px;" id="take-subject"></div>
           <div style="font-weight:700;font-size:1rem;" id="take-title"></div>
-          <div id="shuffle-indicator" style="display:none;align-items:center;gap:5px;margin-top:6px;font-size:.72rem;color:var(--accent3);background:rgba(245,166,35,.12);padding:3px 10px;border-radius:20px;border:1px solid rgba(245,166,35,.3);width:fit-content;">
+          <div id="shuffle-indicator"
+            style="display:none;align-items:center;gap:5px;margin-top:6px;font-size:.72rem;color:var(--accent3);background:rgba(245,166,35,.12);padding:3px 10px;border-radius:20px;border:1px solid rgba(245,166,35,.3);width:fit-content;">
             <i data-lucide="shuffle" style="width:12px;height:12px;"></i> Đảo ngẫu nhiên
           </div>
         </div>
@@ -179,7 +208,8 @@
       </div>
       <div id="take-questions"></div>
       <div style="display:flex;justify-content:center;margin-top:8px;">
-        <button class="btn btn-success" style="font-size:1rem;padding:13px 36px;" onclick="submitQuiz()"><i data-lucide="send"></i> Nộp bài</button>
+        <button class="btn btn-success" style="font-size:1rem;padding:13px 36px;" onclick="submitQuiz()"><i
+            data-lucide="send"></i> Nộp bài</button>
       </div>
     </div>
 
@@ -260,9 +290,11 @@
         <i data-lucide="share-2" style="color:var(--accent);width:20px;height:20px;flex-shrink:0;"></i>
         <h3 style="margin:0;">Chia sẻ đề thi</h3>
       </div>
-      <p style="color:var(--muted);font-size:.84rem;margin-bottom:16px;">Ai có link này đều có thể vào làm bài ngay, không cần đăng ký tài khoản.</p>
+      <p style="color:var(--muted);font-size:.84rem;margin-bottom:16px;">Ai có link này đều có thể vào làm bài ngay,
+        không cần đăng ký tài khoản.</p>
       <div style="display:flex;gap:8px;">
-        <input class="form-input" id="share-link-input" readonly style="flex:1;font-size:.75rem;color:var(--muted);cursor:text;">
+        <input class="form-input" id="share-link-input" readonly
+          style="flex:1;font-size:.75rem;color:var(--muted);cursor:text;">
         <button class="btn btn-primary btn-sm" id="copy-link-btn" onclick="copyShareLinkModal()">
           <i data-lucide="copy"></i> Sao chép
         </button>
@@ -285,7 +317,58 @@
     </div>
   </div>
 
+  <!-- Auth modal -->
+  <div class="modal-overlay" id="authModal">
+    <div class="modal auth-modal">
+      <button class="modal-close-btn" onclick="closeAuthModal()"><i data-lucide="x"></i></button>
+      <div class="auth-logo"><i data-lucide="pencil-line"></i> Hacka</div>
+
+      <!-- Tabs -->
+      <div class="auth-tabs">
+        <button class="auth-tab active" id="tab-login" onclick="switchAuthTab('login')">Đăng nhập</button>
+        <button class="auth-tab" id="tab-register" onclick="switchAuthTab('register')">Đăng ký</button>
+      </div>
+
+      <!-- Login form -->
+      <form id="form-login" onsubmit="submitLogin(event)">
+        <div class="auth-field">
+          <label>Email</label>
+          <input class="form-input" type="email" id="login-email" placeholder="email@example.com" required>
+        </div>
+        <div class="auth-field">
+          <label>Mật khẩu</label>
+          <input class="form-input" type="password" id="login-password" placeholder="••••••••" required>
+        </div>
+        <div class="auth-error" id="login-error"></div>
+        <button class="btn btn-primary auth-submit" type="submit" id="login-btn">
+          <i data-lucide="log-in"></i> Đăng nhập
+        </button>
+      </form>
+
+      <!-- Register form -->
+      <form id="form-register" style="display:none;" onsubmit="submitRegister(event)">
+        <div class="auth-field">
+          <label>Tên hiển thị</label>
+          <input class="form-input" type="text" id="reg-username" placeholder="Nguyễn Văn A" required>
+        </div>
+        <div class="auth-field">
+          <label>Email</label>
+          <input class="form-input" type="email" id="reg-email" placeholder="email@example.com" required>
+        </div>
+        <div class="auth-field">
+          <label>Mật khẩu <span style="color:var(--muted);font-weight:400;">(ít nhất 6 ký tự)</span></label>
+          <input class="form-input" type="password" id="reg-password" placeholder="••••••••" required minlength="6">
+        </div>
+        <div class="auth-error" id="register-error"></div>
+        <button class="btn btn-primary auth-submit" type="submit" id="register-btn">
+          <i data-lucide="user-plus"></i> Tạo tài khoản
+        </button>
+      </form>
+    </div>
+  </div>
+
   <script src="js/script.js"></script>
+  <script src="js/auth.js"></script>
 </body>
 
 </html>

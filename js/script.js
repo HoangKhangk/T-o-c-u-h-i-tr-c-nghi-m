@@ -1,16 +1,68 @@
+const API = '/lambaitapj/Hacka/api';
 
 // ─── STATE ───────────────────────────────────────────
-let questions = []; // editing questions
-let quizzes = JSON.parse(localStorage.getItem('quizmaker_quizzes') || '[]');
-let currentQuiz = null;
+let questions    = [];       // câu hỏi đang soạn
+let quizzes      = [];       // cache danh sách đề từ API
+let currentQuiz  = null;
 let currentQuizId = null;
 let shuffleEnabled = false;
-let sharedQuiz = null;   // quiz loaded from share link
-let tempQuiz = null;     // unshuffled copy for shared quiz retake
-let userAnswers = {};
+let sharedQuiz   = null;
+let tempQuiz     = null;
+let userAnswers  = {};
 let timerInterval = null;
-let timeLeft = 0;
-let startTime = null;
+let timeLeft     = 0;
+let startTime    = null;
+
+// ─── API HELPER ──────────────────────────────────────
+async function apiFetch(path, options = {}) {
+    const res = await fetch(API + path, {
+        credentials: 'include',
+        headers: { 'Content-Type': 'application/json' },
+        ...options
+    });
+    return res.json();
+}
+
+// ─── DATA ADAPTERS ───────────────────────────────────
+// Đóng gói subject + desc vào 1 field description của API
+function packDesc(subject, desc) {
+    return JSON.stringify({ subject: subject || '', desc: desc || '' });
+}
+function unpackDesc(raw) {
+    try {
+        const obj = JSON.parse(raw);
+        if (obj && typeof obj === 'object') return { subject: obj.subject || '', desc: obj.desc || '' };
+    } catch (_) {}
+    return { subject: '', desc: raw || '' };
+}
+
+// Chuyển exam từ API → định dạng nội bộ của app
+function examToQuiz(exam) {
+    const { subject, desc } = unpackDesc(exam.description || '');
+    return {
+        id:             parseInt(exam.id),
+        title:          exam.title,
+        subject,
+        time:           exam.time_limit,
+        desc,
+        share_code:     exam.share_code || '',
+        createdAt:      (exam.created_at || '').slice(0, 10),
+        question_count: exam.question_count ?? (exam.questions?.length ?? 0),
+        questions: (exam.questions || []).map(q => {
+            const ans = q.answers || [];
+            const choices = ans.map(a => a.content || '');
+            while (choices.length < 4) choices.push('');
+            const correct = ans.findIndex(a => parseInt(a.is_correct) === 1);
+            return {
+                id:       q.id,
+                text:     q.content,
+                choices,
+                correct:  correct >= 0 ? correct : 0,
+                _answers: ans          // giữ để map answer_id khi nộp bài
+            };
+        })
+    };
+}
 
 // ─── SHUFFLE ─────────────────────────────────────────
 function shuffleArray(arr) {
@@ -27,104 +79,31 @@ function shuffleQuiz(quiz) {
         const order = shuffleArray([0, 1, 2, 3]);
         return {
             ...q,
-            choices: order.map(i => q.choices[i]),
-            correct: order.indexOf(q.correct)
+            choices:  order.map(i => q.choices[i]),
+            correct:  order.indexOf(q.correct),
+            _answers: order.map(i => (q._answers || [])[i])
         };
     });
     return { ...quiz, questions: qs };
 }
 
 // ─── SHARE ───────────────────────────────────────────
-function minifyQuiz(quiz) {
-    return {
-        i: quiz.id,
-        t: quiz.title,
-        s: quiz.subject || '',
-        m: quiz.time,
-        d: quiz.desc || '',
-        q: quiz.questions.map(q => [q.text, q.choices, q.correct])
-    };
-}
-
-function expandQuiz(mini) {
-    return {
-        id: mini.i,
-        title: mini.t,
-        subject: mini.s || '',
-        time: mini.m,
-        desc: mini.d || '',
-        questions: mini.q.map((q, i) => ({
-            id: i,
-            text: q[0],
-            choices: q[1],
-            correct: q[2]
-        }))
-    };
-}
-
-function encodeQuizForShare(quiz) {
-    try {
-        const json = JSON.stringify(minifyQuiz(quiz));
-        const compressed = LZString.compressToBase64(json);
-        return compressed.replace(/\+/g, '-').replace(/\//g, '_').replace(/=/g, '');
-    } catch (e) { return null; }
-}
-
-function decodeQuizFromShare(str) {
-    let b64 = str.replace(/-/g, '+').replace(/_/g, '/');
-    while (b64.length % 4) b64 += '=';
-    try {
-        const json = LZString.decompressFromBase64(b64);
-        if (json) {
-            const parsed = JSON.parse(json);
-            if (parsed) {
-                // Minified format: has q array of arrays
-                if (Array.isArray(parsed.q)) return expandQuiz(parsed);
-                // Old LZ format: full object
-                if (parsed.questions) return parsed;
-            }
-        }
-    } catch (e) {}
-    // Fallback: old plain base64 links
-    try {
-        return JSON.parse(decodeURIComponent(escape(atob(b64))));
-    } catch (e) { return null; }
-}
-
 function getShareLink(quiz) {
-    const encoded = encodeQuizForShare(quiz);
-    if (!encoded) return null;
-    return window.location.href.split('#')[0] + '#q=' + encoded;
-}
-
-async function shortenUrl(longUrl) {
-    try {
-        const res = await fetch('https://is.gd/create.php?format=json&url=' + encodeURIComponent(longUrl));
-        if (!res.ok) return null;
-        const data = await res.json();
-        return data.shorturl || null;
-    } catch (e) { return null; }
+    const base = window.location.href.split('?')[0].split('#')[0];
+    return base + '?share=' + (quiz.share_code || '');
 }
 
 async function openShareModal(id, e) {
     if (e) e.stopPropagation();
-    const quiz = quizzes.find(q => q.id === id);
+    const quiz = quizzes.find(q => q.id === parseInt(id));
     if (!quiz) return;
-    const link = getShareLink(quiz);
-    if (!link) { showToast('Không thể tạo link!', true); return; }
 
     const input = document.getElementById('share-link-input');
-    const btn = document.getElementById('copy-link-btn');
-    input.value = 'Đang rút gọn link...';
-    btn.innerHTML = '<i data-lucide="loader-circle"></i> Chờ chút...';
-    btn.disabled = true;
-    document.getElementById('shareModal').classList.add('open');
-    lucide.createIcons();
-
-    const shortLink = await shortenUrl(link);
-    input.value = shortLink || link;
+    const btn   = document.getElementById('copy-link-btn');
+    input.value = getShareLink(quiz);
     btn.innerHTML = '<i data-lucide="copy"></i> Sao chép';
-    btn.disabled = false;
+    btn.disabled  = false;
+    document.getElementById('shareModal').classList.add('open');
     lucide.createIcons();
 }
 
@@ -134,52 +113,72 @@ function closeShareModal() {
 
 function copyShareLinkModal() {
     const input = document.getElementById('share-link-input');
-    const btn = document.getElementById('copy-link-btn');
+    const btn   = document.getElementById('copy-link-btn');
     navigator.clipboard.writeText(input.value).catch(() => {
-        input.select();
-        document.execCommand('copy');
+        input.select(); document.execCommand('copy');
     });
     btn.innerHTML = '<i data-lucide="check"></i> Đã sao chép!';
     lucide.createIcons();
     showToast('Đã sao chép link chia sẻ!');
-    setTimeout(() => {
-        btn.innerHTML = '<i data-lucide="copy"></i> Sao chép';
-        lucide.createIcons();
-    }, 2000);
+    setTimeout(() => { btn.innerHTML = '<i data-lucide="copy"></i> Sao chép'; lucide.createIcons(); }, 2000);
 }
 
-function checkShareHash() {
-    const hash = window.location.hash;
-    if (!hash.startsWith('#q=')) return;
-    const encoded = hash.slice(3);
-    const quiz = decodeQuizFromShare(encoded);
-    if (!quiz || !quiz.title || !quiz.questions) {
-        showToast('Link không hợp lệ hoặc đã hết hạn!', true);
+// Đọc ?share= từ URL, nếu không có thì fallback sang #q= cũ
+async function checkShareParam() {
+    const params    = new URLSearchParams(window.location.search);
+    const shareCode = params.get('share');
+
+    if (shareCode) {
+        await loadSharedByCode(shareCode);
         return;
     }
-    sharedQuiz = quiz;
+
+    // Backward-compat: link cũ dùng #q=<lz-encoded>
+    const hash = window.location.hash;
+    if (hash.startsWith('#q=')) {
+        const quiz = decodeQuizFromLZ(hash.slice(3));
+        if (quiz && quiz.title && quiz.questions) {
+            sharedQuiz = quiz;
+            renderSharePage(quiz);
+        } else {
+            showToast('Link không hợp lệ!', true);
+        }
+    }
+}
+
+async function loadSharedByCode(code) {
+    try {
+        const json = await apiFetch(`/exams.php?share_code=${encodeURIComponent(code)}`);
+        if (!json.success) { showToast('Không tìm thấy đề thi!', true); return; }
+        sharedQuiz = examToQuiz(json.data);
+        renderSharePage(sharedQuiz);
+    } catch {
+        showToast('Lỗi kết nối server!', true);
+    }
+}
+
+function renderSharePage(quiz) {
     document.getElementById('share-title').textContent = quiz.title;
 
     const subjEl = document.getElementById('share-subject-badge');
     subjEl.innerHTML = quiz.subject
-        ? `<span class="badge badge-blue" style="margin-bottom:4px;">${quiz.subject}</span>`
-        : '';
+        ? `<span class="badge badge-blue" style="margin-bottom:4px;">${quiz.subject}</span>` : '';
 
     document.getElementById('share-meta').innerHTML = `
         <div class="share-stat"><i data-lucide="file-text"></i> ${quiz.questions.length} câu hỏi</div>
-        <div class="share-stat"><i data-lucide="timer"></i> ${quiz.time} phút</div>
-    `;
+        <div class="share-stat"><i data-lucide="timer"></i> ${quiz.time} phút</div>`;
 
     const descEl = document.getElementById('share-desc-text');
-    descEl.textContent = quiz.desc || '';
+    descEl.textContent  = quiz.desc || '';
     descEl.style.display = quiz.desc ? 'block' : 'none';
 
+    // Kiểm tra đề đã có trong thư viện chưa
     const alreadySaved = quizzes.some(q => q.id === quiz.id);
     const saveBtn = document.getElementById('save-shared-btn');
-    if (alreadySaved) {
-        saveBtn.innerHTML = '<i data-lucide="check-circle"></i> Đã có trong thư viện';
-        saveBtn.disabled = true;
-    }
+    saveBtn.disabled  = alreadySaved;
+    saveBtn.innerHTML = alreadySaved
+        ? '<i data-lucide="check-circle"></i> Đã có trong thư viện'
+        : '<i data-lucide="bookmark-plus"></i> Lưu vào thư viện của tôi';
 
     showPage('share');
     lucide.createIcons();
@@ -187,14 +186,14 @@ function checkShareHash() {
 
 function startSharedQuiz(shuffle = false) {
     if (!sharedQuiz) return;
-    tempQuiz = JSON.parse(JSON.stringify(sharedQuiz));
+    tempQuiz      = JSON.parse(JSON.stringify(sharedQuiz));
     currentQuizId = null;
     shuffleEnabled = shuffle;
-    currentQuiz = shuffle ? shuffleQuiz(tempQuiz) : JSON.parse(JSON.stringify(tempQuiz));
-    userAnswers = {};
+    currentQuiz   = shuffle ? shuffleQuiz(tempQuiz) : JSON.parse(JSON.stringify(tempQuiz));
+    userAnswers   = {};
     showPage('take');
     document.querySelectorAll('.nav-btn').forEach(b => b.classList.remove('active'));
-    document.getElementById('take-title').textContent = currentQuiz.title;
+    document.getElementById('take-title').textContent   = currentQuiz.title;
     document.getElementById('take-subject').textContent = currentQuiz.subject || '';
     const ind = document.getElementById('shuffle-indicator');
     if (ind) ind.style.display = shuffle ? 'flex' : 'none';
@@ -203,20 +202,78 @@ function startSharedQuiz(shuffle = false) {
     updateProgress();
 }
 
-function saveSharedQuiz() {
+async function saveSharedQuiz() {
     if (!sharedQuiz) return;
-    if (quizzes.some(q => q.id === sharedQuiz.id)) {
-        showToast('Đề này đã có trong thư viện!');
+
+    if (!currentUser) {
+        openAuthModal('login');
+        showToast('Vui lòng đăng nhập để lưu đề!', true);
         return;
     }
-    const quiz = { ...sharedQuiz, createdAt: new Date().toLocaleDateString('vi-VN') };
-    quizzes.unshift(quiz);
-    localStorage.setItem('quizmaker_quizzes', JSON.stringify(quizzes));
-    showToast('Đã lưu vào thư viện!');
+
     const btn = document.getElementById('save-shared-btn');
-    btn.innerHTML = '<i data-lucide="check-circle"></i> Đã lưu!';
-    btn.disabled = true;
+    btn.disabled  = true;
+    btn.innerHTML = '<i data-lucide="loader-circle"></i> Đang lưu...';
     lucide.createIcons();
+
+    try {
+        // Tạo bản sao đề vào thư viện của mình
+        const examJson = await apiFetch('/exams.php', {
+            method: 'POST',
+            body: JSON.stringify({
+                title:       sharedQuiz.title,
+                description: packDesc(sharedQuiz.subject, sharedQuiz.desc),
+                is_public:   true,
+                time_limit:  sharedQuiz.time
+            })
+        });
+        if (!examJson.success) throw new Error(examJson.error);
+
+        await Promise.all(sharedQuiz.questions.map((q, i) =>
+            apiFetch('/questions.php', {
+                method: 'POST',
+                body: JSON.stringify({
+                    exam_id:   examJson.data.id,
+                    content:   q.text,
+                    order_num: i + 1,
+                    answers:   q.choices.map((c, ci) => ({
+                        content:    c || '—',
+                        is_correct: ci === q.correct,
+                        order_num:  ci + 1
+                    }))
+                })
+            })
+        ));
+
+        showToast('Đã lưu vào thư viện!');
+        btn.innerHTML = '<i data-lucide="check-circle"></i> Đã lưu!';
+        await loadQuizzes();
+    } catch (err) {
+        showToast(err.message || 'Lưu thất bại!', true);
+        btn.disabled  = false;
+        btn.innerHTML = '<i data-lucide="bookmark-plus"></i> Lưu vào thư viện của tôi';
+        lucide.createIcons();
+    }
+}
+
+// Giải mã link cũ (#q=lz-base64) để backward-compat
+function decodeQuizFromLZ(str) {
+    try {
+        let b64 = str.replace(/-/g, '+').replace(/_/g, '/');
+        while (b64.length % 4) b64 += '=';
+        const json = LZString.decompressFromBase64(b64);
+        if (json) {
+            const p = JSON.parse(json);
+            if (Array.isArray(p.q)) {
+                return {
+                    id: p.i, title: p.t, subject: p.s || '', time: p.m, desc: p.d || '',
+                    questions: p.q.map((q, i) => ({ id: i, text: q[0], choices: q[1], correct: q[2] }))
+                };
+            }
+            if (p.questions) return p;
+        }
+    } catch (_) {}
+    return null;
 }
 
 // ─── NAVIGATION ──────────────────────────────────────
@@ -241,7 +298,6 @@ function addQuestion(q = null) {
     const id = Date.now() + Math.random();
     questions.push({ id, text: q?.text || '', choices: q?.choices || ['', '', '', ''], correct: q?.correct || 0 });
     renderQuestions();
-    // scroll to new
     setTimeout(() => {
         const cards = document.querySelectorAll('.q-card');
         cards[cards.length - 1]?.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
@@ -273,24 +329,14 @@ function renderQuestions() {
         <select class="correct-select" onchange="updateQ('${q.id}','correct',parseInt(this.value))">
           ${['A', 'B', 'C', 'D'].map((l, ci) => `<option value="${ci}" ${q.correct === ci ? 'selected' : ''}>${l}</option>`).join('')}
         </select>
-      </div>
-    `;
+      </div>`;
         list.appendChild(div);
     });
 }
 
-function updateQ(id, field, val) {
-    const q = questions.find(q => q.id == id);
-    if (q) q[field] = val;
-}
-function updateChoice(id, idx, val) {
-    const q = questions.find(q => q.id == id);
-    if (q) q.choices[idx] = val;
-}
-function deleteQuestion(id) {
-    questions = questions.filter(q => q.id != id);
-    renderQuestions();
-}
+function updateQ(id, field, val) { const q = questions.find(q => q.id == id); if (q) q[field] = val; }
+function updateChoice(id, idx, val) { const q = questions.find(q => q.id == id); if (q) q.choices[idx] = val; }
+function deleteQuestion(id) { questions = questions.filter(q => q.id != id); renderQuestions(); }
 function clearQuestions() {
     showConfirm('Xóa tất cả câu hỏi?', 'Thao tác này không thể hoàn tác.', () => {
         questions = [];
@@ -299,7 +345,7 @@ function clearQuestions() {
     });
 }
 
-// ─── FILE UPLOAD ──────────────────────────────────────
+// ─── FILE UPLOAD ─────────────────────────────────────
 const dropZone = document.getElementById('dropZone');
 dropZone.addEventListener('dragover', e => { e.preventDefault(); dropZone.classList.add('drag'); });
 dropZone.addEventListener('dragleave', () => dropZone.classList.remove('drag'));
@@ -312,54 +358,52 @@ dropZone.addEventListener('drop', e => {
 function handleFile(e) {
     const file = e.target.files[0];
     if (file) processFile(file);
-    // reset input so same file can be re-selected
     e.target.value = '';
 }
 
 function setUploadIcon(html) {
-    const icon = document.getElementById('upload-icon');
-    icon.innerHTML = html;
+    document.getElementById('upload-icon').innerHTML = html;
     lucide.createIcons();
 }
 
 function setUploadState(state, msg) {
-    const zone = document.getElementById('dropZone');
+    const zone  = document.getElementById('dropZone');
     const title = document.getElementById('upload-title');
-    const sub = document.getElementById('upload-sub');
-    const fb = document.getElementById('upload-feedback');
+    const sub   = document.getElementById('upload-sub');
+    const fb    = document.getElementById('upload-feedback');
 
     if (state === 'loading') {
         setUploadIcon('<i data-lucide="loader-circle" class="icon-spin" style="width:3rem;height:3rem;color:var(--accent);"></i>');
         title.textContent = 'Đang đọc file...';
-        sub.textContent = '';
-        fb.style.display = 'none';
+        sub.textContent   = '';
+        fb.style.display  = 'none';
         zone.style.borderColor = 'var(--accent)';
     } else if (state === 'success') {
         setUploadIcon('<i data-lucide="circle-check" style="width:3rem;height:3rem;color:var(--success);"></i>');
-        title.innerHTML = msg;
-        sub.textContent = 'Click để chọn file khác';
+        title.innerHTML   = msg;
+        sub.textContent   = 'Click để chọn file khác';
         zone.style.borderColor = 'var(--success)';
-        fb.style.display = 'flex';
+        fb.style.display  = 'flex';
         fb.style.background = 'rgba(34,201,142,.1)';
-        fb.style.border = '1px solid var(--success)';
-        fb.style.color = 'var(--success)';
+        fb.style.border   = '1px solid var(--success)';
+        fb.style.color    = 'var(--success)';
     } else if (state === 'error') {
         setUploadIcon('<i data-lucide="circle-x" style="width:3rem;height:3rem;color:var(--danger);"></i>');
         title.textContent = msg;
-        sub.innerHTML = 'Vui lòng kiểm tra lại định dạng — <span style="color:var(--accent);cursor:pointer;" onclick="downloadSample()">tải file mẫu</span>';
+        sub.innerHTML     = 'Vui lòng kiểm tra lại định dạng — <span style="color:var(--accent);cursor:pointer;" onclick="downloadSample()">tải file mẫu</span>';
         zone.style.borderColor = 'var(--danger)';
-        fb.style.display = 'flex';
+        fb.style.display  = 'flex';
         fb.style.background = 'rgba(245,91,91,.1)';
-        fb.style.border = '1px solid var(--danger)';
-        fb.style.color = 'var(--danger)';
-        fb.innerHTML = '<i data-lucide="triangle-alert" style="width:16px;height:16px;flex-shrink:0;"></i> ' + msg;
+        fb.style.border   = '1px solid var(--danger)';
+        fb.style.color    = 'var(--danger)';
+        fb.innerHTML      = '<i data-lucide="triangle-alert" style="width:16px;height:16px;flex-shrink:0;"></i> ' + msg;
         lucide.createIcons();
     } else {
         setUploadIcon('<i data-lucide="file-text" style="width:3rem;height:3rem;color:var(--muted);"></i>');
-        title.innerHTML = 'Kéo thả file vào đây hoặc <span style="color:var(--accent);text-decoration:underline;">click để chọn</span>';
-        sub.textContent = 'Hỗ trợ .txt và .docx — xem định dạng bên dưới';
+        title.innerHTML   = 'Kéo thả file vào đây hoặc <span style="color:var(--accent);text-decoration:underline;">click để chọn</span>';
+        sub.textContent   = 'Hỗ trợ .txt và .docx — xem định dạng bên dưới';
         zone.style.borderColor = '';
-        fb.style.display = 'none';
+        fb.style.display  = 'none';
     }
 }
 
@@ -371,7 +415,7 @@ function processFile(file) {
         const reader = new FileReader();
         reader.onload = e => {
             let text = e.target.result;
-            if (text.includes('\uFFFD')) {
+            if (text.includes('�')) {
                 const r2 = new FileReader();
                 r2.onload = ev => parseTxt(ev.target.result, file.name);
                 r2.onerror = () => setUploadState('error', 'Không đọc được file. Hãy lưu lại dưới dạng UTF-8.');
@@ -393,26 +437,19 @@ function processFile(file) {
     }
 }
 
-// ─── DOCX XML PARSER (đọc màu đỏ trực tiếp) ──────────
+// ─── DOCX XML PARSER ─────────────────────────────────
 async function parseDocxXml(arrayBuffer, filename) {
     try {
-        // Unzip docx (it's a ZIP) — dùng JSZip nếu có, fallback sang mammoth
-        let rows; // [{text, isRed}]
-
+        let rows;
         if (typeof JSZip !== 'undefined') {
-            const zip = await JSZip.loadAsync(arrayBuffer);
+            const zip    = await JSZip.loadAsync(arrayBuffer);
             const xmlStr = await zip.file('word/document.xml').async('string');
             rows = extractRowsFromXml(xmlStr);
         } else {
-            // Fallback: dùng mammoth + phân tích HTML để lấy màu đỏ
-            if (typeof mammoth === 'undefined') {
-                setUploadState('error', 'Thư viện chưa tải xong, vui lòng thử lại!');
-                return;
-            }
+            if (typeof mammoth === 'undefined') { setUploadState('error', 'Thư viện chưa tải xong, vui lòng thử lại!'); return; }
             const result = await mammoth.convertToHtml({ arrayBuffer });
             rows = extractRowsFromHtml(result.value);
         }
-
         parseRowsToQuestions(rows, filename);
     } catch (err) {
         setUploadState('error', 'Lỗi đọc file .docx: ' + err.message);
@@ -420,65 +457,42 @@ async function parseDocxXml(arrayBuffer, filename) {
 }
 
 function extractRowsFromHtml(html) {
-    // Parse mammoth HTML to get paragraphs + red color info
     const parser = new DOMParser();
-    const doc = parser.parseFromString(html, 'text/html');
-    const rows = [];
+    const doc    = parser.parseFromString(html, 'text/html');
+    const rows   = [];
     doc.querySelectorAll('p').forEach(p => {
-        const text = p.textContent.replace(/[\ufeff\u200b]/g, '').trim();
+        const text = p.textContent.replace(/[﻿​]/g, '').trim();
         if (!text) return;
-        // Check if any element inside has red color
         let isRed = false;
         p.querySelectorAll('[style]').forEach(el => {
             const style = el.getAttribute('style') || '';
-            if (/color\s*:\s*#?[fF][fF]0{4}/i.test(style) || /color\s*:\s*red/i.test(style)) {
-                isRed = true;
-            }
+            if (/color\s*:\s*#?[fF][fF]0{4}/i.test(style) || /color\s*:\s*red/i.test(style)) isRed = true;
         });
-        // Also check inline style on spans with color:#FF0000
-        if (!isRed) {
-            const inner = p.innerHTML;
-            if (/color\s*:\s*#[Ff][Ff]00{2}/i.test(inner)) isRed = true;
-        }
+        if (!isRed && /color\s*:\s*#[Ff][Ff]00{2}/i.test(p.innerHTML)) isRed = true;
         rows.push({ text, isRed });
     });
     return rows;
 }
 
 function extractRowsFromXml(xmlStr) {
-    // Trả về [{text, isRed}] - mỗi paragraph 1 row
-    // isRed = true nếu BẤT KỲ run nào trong paragraph có màu FF0000
-    // Đặc biệt: cũng trả về redText = text của run đỏ (để xác định đúng đáp án)
     const parser = new DOMParser();
     const xmlDoc = parser.parseFromString(xmlStr, 'text/xml');
-    const W = 'http://schemas.openxmlformats.org/wordprocessingml/2006/main';
-    const paragraphs = xmlDoc.getElementsByTagNameNS(W, 'p');
-    const rows = [];
-
-    for (const p of paragraphs) {
-        const runs = p.getElementsByTagNameNS(W, 'r');
-        let fullText = '';
-        let redText = '';   // chỉ phần text màu đỏ
-        let isRed = false;
-
-        for (const r of runs) {
-            const t = r.getElementsByTagNameNS(W, 't')[0];
+    const W      = 'http://schemas.openxmlformats.org/wordprocessingml/2006/main';
+    const rows   = [];
+    for (const p of xmlDoc.getElementsByTagNameNS(W, 'p')) {
+        let fullText = '', redText = '', isRed = false;
+        for (const r of p.getElementsByTagNameNS(W, 'r')) {
+            const t       = r.getElementsByTagNameNS(W, 't')[0];
             const runText = (t && t.textContent) ? t.textContent : '';
             if (!runText) continue;
             fullText += runText;
-
             const color = r.getElementsByTagNameNS(W, 'color')[0];
-            if (color) {
-                const val = (color.getAttribute('w:val') || '').toUpperCase();
-                if (val === 'FF0000') {
-                    isRed = true;
-                    redText += runText;
-                }
+            if (color && (color.getAttribute('w:val') || '').toUpperCase() === 'FF0000') {
+                isRed = true; redText += runText;
             }
         }
-
-        fullText = fullText.replace(/[\ufeff\u200b]/g, '').trim();
-        redText = redText.replace(/[\ufeff\u200b]/g, '').trim();
+        fullText = fullText.replace(/[﻿​]/g, '').trim();
+        redText  = redText.replace(/[﻿​]/g, '').trim();
         if (fullText) rows.push({ text: fullText, isRed, redText });
     }
     return rows;
@@ -486,26 +500,16 @@ function extractRowsFromXml(xmlStr) {
 
 function parseRowsToQuestions(rows, filename) {
     const questions_parsed = [];
-
-    function isQuestion(text) {
-        return /^Câu\s*\d+[A-Za-z]?\s*[:.)]/i.test(text);
-    }
-
-    // Tách "a. xxxb. yyyc. zzz" → { a: 'xxx', b: 'yyy', c: 'zzz' }
-    // Tách "a. xxxb. yyyc. zzz" → { a:'xxx', b:'yyy', c:'zzz', d:'...' }
-    // Không dùng lookbehind, tìm theo thứ tự a→b→c→d
+    function isQuestion(text) { return /^Câu\s*\d+[A-Za-z]?\s*[:.)]/i.test(text); }
     function splitChoicesFromStr(text) {
-        const result = {};
-        const markerPos = {};
+        const result = {}, markerPos = {};
         let searchFrom = 0;
         for (const letter of ['a', 'b', 'c', 'd']) {
             const re = new RegExp(letter + '\\s*[.)]\\s*', 'gi');
-            let bestPos = null, bestEnd = null, bestScore = -1;
-            let m;
+            let bestPos = null, bestEnd = null, bestScore = -1, m;
             re.lastIndex = searchFrom;
             while ((m = re.exec(text)) !== null) {
-                const pos = m.index;
-                const prev = pos > 0 ? text[pos - 1] : '';
+                const pos = m.index, prev = pos > 0 ? text[pos - 1] : '';
                 const score = (prev === '' || !/[a-zA-Z0-9]/.test(prev)) ? 2 : 1;
                 if (score > bestScore) { bestScore = score; bestPos = pos; bestEnd = m.index + m[0].length; }
                 if (score === 2) break;
@@ -521,17 +525,10 @@ function parseRowsToQuestions(rows, filename) {
         });
         return result;
     }
-
-    // Xác định đáp án đúng từ redText của một row (không dùng lookbehind)
     function getRedLetter(row) {
         if (!row.isRed) return null;
-        const findLetter = (str) => {
-            const m = str.match(/([a-dA-D])\s*[.)]/);
-            return m ? m[1].toLowerCase() : null;
-        };
-        const l = findLetter(row.redText);
-        if (l) return l;
-        // Nếu redText không chứa letter marker, tìm trong fullText tại vị trí redText xuất hiện
+        const m = row.redText.match(/([a-dA-D])\s*[.)]/);
+        if (m) return m[1].toLowerCase();
         const pos = row.text.indexOf(row.redText.slice(0, 10));
         if (pos >= 0) {
             const before = row.text.slice(0, pos + row.redText.length);
@@ -546,60 +543,36 @@ function parseRowsToQuestions(rows, filename) {
     let i = 0;
     while (i < rows.length) {
         const row = rows[i];
-        const qm = row.text.match(/^Câu\s*(\d+[A-Za-z]?)\s*[:.)]\s*(.+)/i);
+        const qm  = row.text.match(/^Câu\s*(\d+[A-Za-z]?)\s*[:.)]\s*(.+)/i);
         if (!qm) { i++; continue; }
-
-        const qnum = qm[1];
-        let qbody = qm[2].trim();
-        let j = i + 1;
-
-        // Thu thập tất cả rows của câu này
+        let qbody = qm[2].trim(), j = i + 1;
         const allRows = [row];
-        while (j < rows.length && !isQuestion(rows[j].text)) {
-            allRows.push(rows[j]);
-            j++;
-        }
+        while (j < rows.length && !isQuestion(rows[j].text)) { allRows.push(rows[j]); j++; }
 
-        // --- Phát hiện có choices riêng dòng không ---
-        const separateChoiceRows = allRows.slice(1).filter(r =>
-            /^[a-dA-D]\s*[.)]\s*\S/.test(r.text)
-        );
+        const separateChoiceRows = allRows.slice(1).filter(r => /^[a-dA-D]\s*[.)]\s*\S/.test(r.text));
         const hasSeparateChoices = separateChoiceRows.length >= 2;
-
-        let choicesMap = {};
-        let qText = '';
-        let redLetter = null;
+        let choicesMap = {}, qText = '', redLetter = null;
 
         if (hasSeparateChoices) {
             qText = qbody;
             for (const r of allRows.slice(1)) {
-                const t = r.text;
-                const cm = t.match(/^([a-dA-D])\s*[.)]\s*(.+)/);
+                const t = r.text, cm = t.match(/^([a-dA-D])\s*[.)]\s*(.+)/);
                 if (cm) {
-                    const letter = cm[1].toLowerCase();
-                    const ctext = cm[2].trim();
+                    const letter = cm[1].toLowerCase(), ctext = cm[2].trim();
                     if (!choicesMap[letter]) choicesMap[letter] = { text: ctext, isRed: r.isRed };
                     if (r.isRed) redLetter = letter;
-                } else if (!isQuestion(t)) {
-                    if (Object.keys(choicesMap).length === 0) qText += ' ' + t;
-                }
+                } else if (!isQuestion(t) && Object.keys(choicesMap).length === 0) { qText += ' ' + t; }
             }
         } else {
-            // Inline: tìm vị trí choice đầu tiên trong qbody (không dùng lookbehind)
             const firstChoiceMatch = qbody.match(/([a-dA-D])\s*[.)]\s*/i);
             if (firstChoiceMatch) {
                 qText = qbody.slice(0, firstChoiceMatch.index).trim();
-                let combinedChoices = qbody.slice(firstChoiceMatch.index);
-                for (const r of allRows.slice(1)) combinedChoices += r.text;
-
-                const split = splitChoicesFromStr(combinedChoices);
+                let combined = qbody.slice(firstChoiceMatch.index);
+                for (const r of allRows.slice(1)) combined += r.text;
+                const split = splitChoicesFromStr(combined);
                 for (const [l, t] of Object.entries(split)) choicesMap[l] = { text: t, isRed: false };
-
                 for (const r of allRows) {
-                    if (r.isRed) {
-                        const rl = getRedLetter(r);
-                        if (rl && choicesMap[rl]) { choicesMap[rl].isRed = true; redLetter = rl; break; }
-                    }
+                    if (r.isRed) { const rl = getRedLetter(r); if (rl && choicesMap[rl]) { choicesMap[rl].isRed = true; redLetter = rl; break; } }
                 }
             } else {
                 qText = qbody;
@@ -607,43 +580,25 @@ function parseRowsToQuestions(rows, filename) {
                     const t = r.text;
                     if (/[a-dA-D]\s*[.)]\s*\S/.test(t)) {
                         const split = splitChoicesFromStr(t);
-                        for (const [l, ct] of Object.entries(split)) {
-                            if (!choicesMap[l]) choicesMap[l] = { text: ct, isRed: r.isRed };
-                        }
+                        for (const [l, ct] of Object.entries(split)) { if (!choicesMap[l]) choicesMap[l] = { text: ct, isRed: r.isRed }; }
                         if (r.isRed) { const rl = getRedLetter(r); if (rl) redLetter = rl; }
-                    } else {
-                        if (Object.keys(choicesMap).length === 0) qText += ' ' + t;
-                    }
+                    } else if (Object.keys(choicesMap).length === 0) { qText += ' ' + t; }
                 }
             }
         }
 
-        // Build 4-slot
         const choices = ['', '', '', ''];
         let correct = redLetter ? 'abcd'.indexOf(redLetter) : -1;
         ['a', 'b', 'c', 'd'].forEach((l, ci) => {
-            if (choicesMap[l]) {
-                choices[ci] = choicesMap[l].text;
-                if (choicesMap[l].isRed && correct === -1) correct = ci;
-            }
+            if (choicesMap[l]) { choices[ci] = choicesMap[l].text; if (choicesMap[l].isRed && correct === -1) correct = ci; }
         });
         if (correct === -1) correct = 0;
         if (!qText.trim()) { i = j; continue; }
-
-        questions_parsed.push({
-            id: Date.now() + Math.random(),
-            text: qText.trim(),
-            choices,
-            correct
-        });
+        questions_parsed.push({ id: Date.now() + Math.random(), text: qText.trim(), choices, correct });
         i = j;
     }
 
-    if (!questions_parsed.length) {
-        setUploadState('error', `Không tìm thấy câu hỏi hợp lệ trong "${filename}"`);
-        return;
-    }
-
+    if (!questions_parsed.length) { setUploadState('error', `Không tìm thấy câu hỏi hợp lệ trong "${filename}"`); return; }
     questions = questions_parsed;
     setUploadState('success', `Đã nhận <strong>${questions_parsed.length} câu hỏi</strong> từ "${filename}" ✓`);
     document.getElementById('parsed-count').innerHTML = `✅ ${questions_parsed.length} câu hỏi đã nhập`;
@@ -653,71 +608,32 @@ function parseRowsToQuestions(rows, filename) {
     preview.scrollIntoView({ behavior: 'smooth', block: 'start' });
 }
 
-// --- THAY THẾ TOÀN BỘ HÀM parseTxt CŨ ---
 function parseTxt(text, filename) {
-    // 1. Chuẩn hóa cực mạnh: Xóa ký tự lạ, đưa về một kiểu xuống dòng duy nhất
-    text = text.replace(/[\ufeff\u200b]/g, '').replace(/\r\n/g, '\n').replace(/\r/g, '\n');
-
-    // 2. Tách khối: Dùng RegEx linh hoạt, không bắt buộc phải có \n ở trước nếu là đầu file
+    text = text.replace(/[﻿​]/g, '').replace(/\r\n/g, '\n').replace(/\r/g, '\n');
     const blocks = text.split(/(?=^Câu\s*\d+)/im).filter(b => b.trim());
     const parsed = [];
-
-    blocks.forEach((block) => {
-        // Tách dòng để lấy câu hỏi
+    blocks.forEach(block => {
         let lines = block.split('\n').map(l => l.trim()).filter(Boolean);
-        if (lines.length < 1) return;
-
-        // Lấy nội dung câu hỏi (xóa chữ Câu 1:)
+        if (!lines.length) return;
         let qText = lines[0].replace(/^Câu\s*\d+\s*[:.)-]?\s*/i, '').trim();
-        let choices = [];
-        let correct = 0;
-
-        // Gom toàn bộ phần còn lại của block để quét đáp án (xử lý đáp án dính liền)
-        let bodyText = lines.slice(1).join(' ');
-
-        // 3. Quét đáp án kiểu Azota: Tìm các cụm bắt đầu bằng a. b. c. d. hoặc A. B. C. D.
-        // RegEx này tìm chữ cái + dấu chấm/ngoặc và lấy nội dung cho đến khi gặp chữ cái tiếp theo
+        let choices = [], correct = 0;
         const choiceRegex = /\b([a-dA-D])\s*[.)-]\s*([^]*?)(?=\s+\b[a-dA-D]\s*[.)-]|\s*(?:ĐA|Đáp án|Answer|Key):|$)/gi;
         let m;
-        while ((m = choiceRegex.exec(block)) !== null) {
-            choices.push(m[2].trim());
-        }
-
-        // 4. CƠ CHẾ DỰ PHÒNG CHO CÂU 41, 42 (Khi không thấy a. b. c. d.)
+        while ((m = choiceRegex.exec(block)) !== null) choices.push(m[2].trim());
         if (choices.length < 2) {
-            // Nếu câu hỏi có dấu '?', lấy phần sau dấu '?' làm đáp án
             if (qText.includes('?')) {
-                let parts = qText.split('?');
-                let afterQ = parts.slice(1).join('?').trim();
-                if (afterQ.length > 0) {
-                    qText = parts[0].trim() + '?';
-                    // Tách theo khoảng trắng kép hoặc xuống dòng
-                    choices = afterQ.split(/\s{2,}|\n/).filter(c => c.trim().length > 0);
-                }
+                const parts = qText.split('?'), afterQ = parts.slice(1).join('?').trim();
+                if (afterQ.length > 0) { qText = parts[0].trim() + '?'; choices = afterQ.split(/\s{2,}|\n/).filter(c => c.trim()); }
             }
-
-            // Nếu vẫn không có, lấy các dòng còn lại làm đáp án (cho câu 41 trong ảnh của bạn)
-            if (choices.length < 2 && lines.length > 1) {
-                choices = lines.slice(1).filter(l => !l.match(/^(?:ĐA|Đáp án|Answer|Key):/i));
-            }
+            if (choices.length < 2 && lines.length > 1) choices = lines.slice(1).filter(l => !l.match(/^(?:ĐA|Đáp án|Answer|Key):/i));
         }
-
-        // 5. Tìm đáp án đúng
         const am = block.match(/(?:ĐA|Đáp\s*án|Answer|Key|Chọn)\s*[:\-.\s]*([A-D])/i);
         if (am) correct = 'abcd'.indexOf(am[1].toLowerCase());
-
         if (choices.length >= 2) {
-            while (choices.length < 4) choices.push("");
-            parsed.push({
-                id: Date.now() + Math.random(),
-                text: qText,
-                choices: choices.slice(0, 4),
-                correct: correct < 0 ? 0 : correct
-            });
+            while (choices.length < 4) choices.push('');
+            parsed.push({ id: Date.now() + Math.random(), text: qText, choices: choices.slice(0, 4), correct: correct < 0 ? 0 : correct });
         }
     });
-
-    // Cập nhật giao diện
     if (parsed.length > 0) {
         questions = parsed;
         setUploadState('success', `Đã nhận <strong>${parsed.length} câu hỏi</strong> ✓`);
@@ -745,10 +661,8 @@ function renderParsedPreview() {
           <div class="choice-item">
             <div class="choice-label" style="${ci === q.correct ? 'background:var(--success);color:#fff' : ''}">${l}</div>
             <div style="font-size:.84rem;${ci === q.correct ? 'color:var(--success);font-weight:600' : ''}">${q.choices[ci]}</div>
-          </div>
-        ` : '').join('')}
-      </div>
-    `;
+          </div>` : '').join('')}
+      </div>`;
         list.appendChild(div);
     });
 }
@@ -756,72 +670,99 @@ function renderParsedPreview() {
 function editParsed() {
     document.querySelectorAll('.tab')[1].classList.add('active');
     document.querySelectorAll('.tab')[0].classList.remove('active');
-    document.getElementById('tab-upload').style.display = 'none';
-    document.getElementById('tab-manual').style.display = 'block';
+    document.getElementById('tab-upload').style.display  = 'none';
+    document.getElementById('tab-manual').style.display  = 'block';
     document.getElementById('parsed-preview').style.display = 'none';
     renderQuestions();
 }
 
 function downloadSample() {
-    const sample = `Câu 1: Thủ đô của Việt Nam là?
-A. Hồ Chí Minh
-B. Hà Nội
-C. Đà Nẵng
-D. Huế
-ĐA: B
-
-Câu 2: Sông nào dài nhất Việt Nam?
-A. Sông Đà
-B. Sông Lam
-C. Sông Hồng
-D. Sông Mê Kông
-ĐA: C
-
-Câu 3: Việt Nam có bao nhiêu tỉnh thành?
-A. 58
-B. 61
-C. 63
-D. 65
-ĐA: C`;
-    const blob = new Blob([sample], { type: 'text/plain;charset=utf-8' });
+    const sample = `Câu 1: Thủ đô của Việt Nam là?\nA. Hồ Chí Minh\nB. Hà Nội\nC. Đà Nẵng\nD. Huế\nĐA: B\n\nCâu 2: Sông nào dài nhất Việt Nam?\nA. Sông Đà\nB. Sông Lam\nC. Sông Hồng\nD. Sông Mê Kông\nĐA: C\n\nCâu 3: Việt Nam có bao nhiêu tỉnh thành?\nA. 58\nB. 61\nC. 63\nD. 65\nĐA: C`;
     const a = document.createElement('a');
-    a.href = URL.createObjectURL(blob);
+    a.href = URL.createObjectURL(new Blob([sample], { type: 'text/plain;charset=utf-8' }));
     a.download = 'mau_cau_hoi.txt';
     a.click();
 }
 
-// ─── SAVE QUIZ ───────────────────────────────────────
-function saveQuiz() {
-    const title = document.getElementById('quiz-title').value.trim();
+// ─── SAVE QUIZ (→ API) ───────────────────────────────
+async function saveQuiz() {
+    if (!currentUser) {
+        openAuthModal('login');
+        showToast('Vui lòng đăng nhập để lưu đề!', true);
+        return;
+    }
+
+    const title   = document.getElementById('quiz-title').value.trim();
     const subject = document.getElementById('quiz-subject').value.trim();
-    const time = parseInt(document.getElementById('quiz-time').value) || 30;
-    const desc = document.getElementById('quiz-desc').value.trim();
+    const time    = parseInt(document.getElementById('quiz-time').value) || 30;
+    const desc    = document.getElementById('quiz-desc').value.trim();
 
     if (!title) { showToast('Vui lòng nhập tên đề thi!', true); return; }
     if (!questions.length) { showToast('Chưa có câu hỏi nào!', true); return; }
-
     const valid = questions.filter(q => q.text.trim() && q.choices.some(c => c.trim()));
     if (!valid.length) { showToast('Các câu hỏi chưa đầy đủ nội dung!', true); return; }
 
-    const quiz = { id: Date.now(), title, subject, time, desc, questions: valid, createdAt: new Date().toLocaleDateString('vi-VN') };
-    quizzes.unshift(quiz);
-    localStorage.setItem('quizmaker_quizzes', JSON.stringify(quizzes));
-    showToast('Đã lưu đề thi!');
-    setTimeout(() => {
-        showPage('library');
-        openShareModal(quiz.id);
-    }, 600);
+    const saveBtn = document.querySelector('button[onclick="saveQuiz()"]');
+    if (saveBtn) { saveBtn.disabled = true; saveBtn.innerHTML = '<i data-lucide="loader-circle"></i> Đang lưu...'; lucide.createIcons(); }
+
+    try {
+        // 1. Tạo exam
+        const examJson = await apiFetch('/exams.php', {
+            method: 'POST',
+            body: JSON.stringify({ title, description: packDesc(subject, desc), is_public: true, time_limit: time })
+        });
+        if (!examJson.success) { showToast(examJson.error || 'Lưu đề thất bại!', true); return; }
+
+        const examId = examJson.data.id;
+
+        // 2. Tạo câu hỏi (song song)
+        await Promise.all(valid.map((q, i) =>
+            apiFetch('/questions.php', {
+                method: 'POST',
+                body: JSON.stringify({
+                    exam_id: examId, content: q.text, order_num: i + 1,
+                    answers: q.choices.map((c, ci) => ({ content: c || '—', is_correct: ci === q.correct, order_num: ci + 1 }))
+                })
+            })
+        ));
+
+        showToast('Đã lưu đề thi!');
+        questions = [];
+        await loadQuizzes();
+
+        setTimeout(() => {
+            showPage('library');
+            openShareModal(examId);
+        }, 500);
+    } catch {
+        showToast('Lỗi kết nối server!', true);
+    } finally {
+        if (saveBtn) { saveBtn.disabled = false; saveBtn.innerHTML = '<i data-lucide="save"></i> Lưu đề'; lucide.createIcons(); }
+    }
 }
 
-// ─── LIBRARY ─────────────────────────────────────────
-function renderLibrary() {
-    const grid = document.getElementById('quizGrid');
+// ─── LIBRARY (→ API) ─────────────────────────────────
+async function loadQuizzes() {
+    try {
+        const json = await apiFetch('/exams.php');
+        quizzes = json.success ? json.data.map(examToQuiz) : [];
+    } catch { quizzes = []; }
+}
+
+async function renderLibrary() {
+    const grid  = document.getElementById('quizGrid');
     const empty = document.getElementById('library-empty');
+    grid.innerHTML = '<div style="text-align:center;padding:40px;color:var(--muted);">Đang tải...</div>';
+    empty.style.display = 'none';
+
+    await loadQuizzes();
+
     grid.innerHTML = '';
     if (!quizzes.length) { empty.style.display = 'block'; return; }
-    empty.style.display = 'none';
+
     quizzes.forEach(q => {
-        const div = document.createElement('div');
+        const count = q.question_count ?? (q.questions?.length ?? '?');
+        const div   = document.createElement('div');
         div.className = 'quiz-item';
         div.innerHTML = `
       <div style="display:flex;justify-content:space-between;align-items:flex-start;">
@@ -831,9 +772,9 @@ function renderLibrary() {
         </button>
       </div>
       ${q.subject ? `<span class="badge badge-blue">${q.subject}</span>` : ''}
-      ${q.desc ? `<p style="font-size:.78rem;color:var(--muted);margin-top:8px;">${q.desc}</p>` : ''}
+      ${q.desc    ? `<p style="font-size:.78rem;color:var(--muted);margin-top:8px;">${q.desc}</p>` : ''}
       <div class="meta">
-        <span><i data-lucide="file-text" style="width:13px;height:13px;vertical-align:middle;margin-right:3px;"></i>${q.questions.length} câu</span>
+        <span><i data-lucide="file-text" style="width:13px;height:13px;vertical-align:middle;margin-right:3px;"></i>${count} câu</span>
         <span><i data-lucide="timer" style="width:13px;height:13px;vertical-align:middle;margin-right:3px;"></i>${q.time} phút</span>
         <span><i data-lucide="calendar" style="width:13px;height:13px;vertical-align:middle;margin-right:3px;"></i>${q.createdAt}</span>
       </div>
@@ -841,14 +782,13 @@ function renderLibrary() {
         <button class="btn btn-primary btn-sm" onclick="startQuiz(${q.id},event,false)">
           <i data-lucide="play" style="width:14px;height:14px;"></i> Làm bài
         </button>
-        <button class="btn btn-ghost btn-sm" onclick="startQuiz(${q.id},event,true)" title="Đảo thứ tự câu hỏi và đáp án ngẫu nhiên">
+        <button class="btn btn-ghost btn-sm" onclick="startQuiz(${q.id},event,true)">
           <i data-lucide="shuffle" style="width:14px;height:14px;"></i> Đảo ngẫu nhiên
         </button>
-        <button class="btn btn-ghost btn-sm" onclick="openShareModal(${q.id},event)" title="Lấy link chia sẻ">
+        <button class="btn btn-ghost btn-sm" onclick="openShareModal(${q.id},event)">
           <i data-lucide="share-2" style="width:14px;height:14px;"></i> Chia sẻ
         </button>
-      </div>
-    `;
+      </div>`;
         grid.appendChild(div);
     });
     lucide.createIcons();
@@ -856,32 +796,41 @@ function renderLibrary() {
 
 function deleteQuiz(id, e) {
     e.stopPropagation();
-    showConfirm('Xóa đề thi?', 'Đề thi sẽ bị xóa vĩnh viễn.', () => {
-        quizzes = quizzes.filter(q => q.id !== id);
-        localStorage.setItem('quizmaker_quizzes', JSON.stringify(quizzes));
-        renderLibrary();
-        showToast('Đã xóa đề thi');
+    showConfirm('Xóa đề thi?', 'Đề thi sẽ bị xóa vĩnh viễn.', async () => {
+        try {
+            const json = await apiFetch(`/exams.php?id=${id}`, { method: 'DELETE' });
+            if (json.success) { quizzes = quizzes.filter(q => q.id !== parseInt(id)); renderLibrary(); showToast('Đã xóa đề thi'); }
+            else showToast(json.error || 'Xóa thất bại', true);
+        } catch { showToast('Lỗi kết nối', true); }
     });
 }
 
 // ─── TAKE QUIZ ───────────────────────────────────────
-function startQuiz(id, e, shuffle = false) {
+async function startQuiz(id, e, shuffle = false) {
     if (e) e.stopPropagation();
-    const original = quizzes.find(q => q.id === id);
-    if (!original) return;
-    currentQuizId = id;
+
+    // Tìm trong cache, nếu chưa có questions thì fetch
+    let quiz = quizzes.find(q => q.id === parseInt(id));
+    if (!quiz?.questions?.length) {
+        try {
+            const json = await apiFetch(`/exams.php?id=${id}`);
+            if (!json.success) { showToast('Không tải được đề thi!', true); return; }
+            quiz = examToQuiz(json.data);
+            const idx = quizzes.findIndex(q => q.id === id);
+            if (idx >= 0) quizzes[idx] = quiz;
+        } catch { showToast('Lỗi kết nối!', true); return; }
+    }
+
+    currentQuizId  = id;
     shuffleEnabled = shuffle;
-    currentQuiz = shuffle ? shuffleQuiz(original) : JSON.parse(JSON.stringify(original));
-    userAnswers = {};
+    currentQuiz    = shuffle ? shuffleQuiz(quiz) : JSON.parse(JSON.stringify(quiz));
+    userAnswers    = {};
     showPage('take');
     document.querySelectorAll('.nav-btn').forEach(b => b.classList.remove('active'));
-
-    document.getElementById('take-title').textContent = currentQuiz.title;
+    document.getElementById('take-title').textContent   = currentQuiz.title;
     document.getElementById('take-subject').textContent = currentQuiz.subject || '';
-
     const ind = document.getElementById('shuffle-indicator');
     if (ind) ind.style.display = shuffle ? 'flex' : 'none';
-
     renderTakeQuestions();
     startTimer(currentQuiz.time * 60);
     updateProgress();
@@ -900,17 +849,14 @@ function renderTakeQuestions() {
           <div class="tq-choice" onclick="selectAnswer(${i},${ci})" id="c-${i}-${ci}">
             <div class="tq-choice-letter">${'ABCD'[ci]}</div>
             <span>${c || '—'}</span>
-          </div>
-        `).join('')}
-      </div>
-    `;
+          </div>`).join('')}
+      </div>`;
         wrap.appendChild(card);
     });
 }
 
 function selectAnswer(qi, ci) {
     userAnswers[qi] = ci;
-    // highlight
     for (let k = 0; k < 4; k++) {
         const el = document.getElementById(`c-${qi}-${k}`);
         if (el) el.classList.toggle('selected', k === ci);
@@ -920,22 +866,21 @@ function selectAnswer(qi, ci) {
 
 function updateProgress() {
     const total = currentQuiz?.questions.length || 0;
-    const done = Object.keys(userAnswers).length;
-    document.getElementById('progress-fill').style.width = (done / total * 100) + '%';
-    document.getElementById('progress-label').textContent = `${done} / ${total} câu`;
+    const done  = Object.keys(userAnswers).length;
+    document.getElementById('progress-fill').style.width    = (done / total * 100) + '%';
+    document.getElementById('progress-label').textContent   = `${done} / ${total} câu`;
 }
 
 function startTimer(seconds) {
     clearInterval(timerInterval);
-    timeLeft = seconds;
+    timeLeft  = seconds;
     startTime = Date.now();
-    const el = document.getElementById('timer-display');
+    const el  = document.getElementById('timer-display');
     function tick() {
         const m = Math.floor(timeLeft / 60).toString().padStart(2, '0');
         const s = (timeLeft % 60).toString().padStart(2, '0');
         el.textContent = `${m}:${s}`;
-        if (timeLeft <= 60) el.classList.add('warning');
-        else el.classList.remove('warning');
+        if (timeLeft <= 60) el.classList.add('warning'); else el.classList.remove('warning');
         if (timeLeft <= 0) { clearInterval(timerInterval); submitQuiz(); return; }
         timeLeft--;
     }
@@ -943,33 +888,29 @@ function startTimer(seconds) {
     timerInterval = setInterval(tick, 1000);
 }
 
-function submitQuiz() {
+async function submitQuiz() {
     clearInterval(timerInterval);
     const elapsed = Math.round((Date.now() - startTime) / 1000);
-    const total = currentQuiz.questions.length;
-    let correct = 0;
-    currentQuiz.questions.forEach((q, i) => {
-        if (userAnswers[i] === q.correct) correct++;
-    });
+    const total   = currentQuiz.questions.length;
+    let correct   = 0;
+    currentQuiz.questions.forEach((q, i) => { if (userAnswers[i] === q.correct) correct++; });
     const pct = Math.round(correct / total * 100);
 
     document.getElementById('scorePct').textContent = pct + '%';
     document.getElementById('scoreRing').style.setProperty('--pct', pct + '%');
     document.getElementById('result-title').textContent = currentQuiz.title;
-    document.getElementById('r-correct').textContent = correct;
-    document.getElementById('r-wrong').textContent = total - correct;
+    document.getElementById('r-correct').textContent   = correct;
+    document.getElementById('r-wrong').textContent     = total - correct;
     const em = Math.floor(elapsed / 60), es = elapsed % 60;
     document.getElementById('r-time').textContent = `${em}:${es.toString().padStart(2, '0')}`;
 
     const msgs = ['Cần cố gắng hơn! 💪', 'Khá tốt! 🙂', 'Tốt lắm! 😊', 'Xuất sắc! 🌟', 'Hoàn hảo! 🏆'];
     document.getElementById('result-msg').textContent = msgs[Math.floor(pct / 25)] || msgs[4];
 
-    // Review
     const rev = document.getElementById('review-list');
     rev.innerHTML = '';
     currentQuiz.questions.forEach((q, i) => {
-        const ua = userAnswers[i];
-        const isCorrect = ua === q.correct;
+        const ua = userAnswers[i], isCorrect = ua === q.correct;
         const div = document.createElement('div');
         div.className = 'review-card';
         div.innerHTML = `
@@ -979,28 +920,43 @@ function submitQuiz() {
             if (ci === q.correct) cls = 'correct';
             else if (ci === ua && !isCorrect) cls = 'user-wrong';
             return cls ? `<div class="review-choice ${cls}">${'ABCD'[ci]}. ${c} ${ci === q.correct ? '← Đúng' : ''}</div>` : '';
-        }).join('')}
-    `;
+        }).join('')}`;
         rev.appendChild(div);
     });
 
     showPage('result');
+
+    // Lưu kết quả lên API (background, không block UI)
+    if (currentQuiz.id) {
+        const answersPayload = currentQuiz.questions.map((q, i) => {
+            const chosen    = userAnswers[i];
+            const answerObj = (q._answers || [])[chosen];
+            return { question_id: q.id, answer_id: answerObj?.id ?? null, is_correct: chosen === q.correct };
+        });
+        apiFetch('/results.php', {
+            method: 'POST',
+            body: JSON.stringify({
+                exam_id:    currentQuiz.id,
+                guest_name: currentUser ? null : 'Khách',
+                score:      correct,
+                total,
+                duration:   elapsed,
+                answers:    answersPayload
+            })
+        }).catch(() => {});
+    }
 }
 
 function retakeQuiz() {
-    if (currentQuizId) {
-        startQuiz(currentQuizId, null, shuffleEnabled);
-    } else if (tempQuiz) {
-        sharedQuiz = tempQuiz;
-        startSharedQuiz(shuffleEnabled);
-    }
+    if (currentQuizId) startQuiz(currentQuizId, null, shuffleEnabled);
+    else if (tempQuiz) { sharedQuiz = tempQuiz; startSharedQuiz(shuffleEnabled); }
 }
 
 // ─── MODAL ───────────────────────────────────────────
 let modalCallback = null;
 function showConfirm(title, body, cb) {
     document.getElementById('modal-title').textContent = title;
-    document.getElementById('modal-body').textContent = body;
+    document.getElementById('modal-body').textContent  = body;
     document.getElementById('confirmModal').classList.add('open');
     modalCallback = cb;
 }
@@ -1011,28 +967,13 @@ document.getElementById('modal-confirm-btn').onclick = () => { closeModal(); if 
 function showToast(msg, error = false) {
     const t = document.getElementById('toast');
     t.textContent = msg;
-    t.className = 'show' + (error ? ' error' : '');
+    t.className   = 'show' + (error ? ' error' : '');
     clearTimeout(t._t);
     t._t = setTimeout(() => t.className = '', 2500);
 }
 
-// ─── INIT ─────────────────────────────────────────────
+// ─── INIT ────────────────────────────────────────────
 window.addEventListener('DOMContentLoaded', () => {
     lucide.createIcons();
-    // Add sample quiz if empty
-    if (!quizzes.length) {
-        quizzes = [{
-            id: 1, title: 'Kiểm tra Địa lý cơ bản', subject: 'Địa lý',
-            time: 10, desc: 'Đề mẫu', createdAt: new Date().toLocaleDateString('vi-VN'),
-            questions: [
-                { id: 1, text: 'Thủ đô của Việt Nam là?', choices: ['Hà Nội', 'Hồ Chí Minh', 'Đà Nẵng', 'Huế'], correct: 0 },
-                { id: 2, text: 'Sông dài nhất Việt Nam là?', choices: ['Sông Hồng', 'Sông Mê Kông', 'Sông Đà', 'Sông Lam'], correct: 0 },
-                { id: 3, text: 'Việt Nam có bao nhiêu tỉnh thành?', choices: ['58', '61', '63', '65'], correct: 2 },
-                { id: 4, text: 'Diện tích Việt Nam khoảng bao nhiêu km²?', choices: ['231.000', '331.000', '431.000', '531.000'], correct: 1 },
-                { id: 5, text: 'Đỉnh núi cao nhất Việt Nam là?', choices: ['Bạch Mã', 'Ngọc Linh', 'Fansipan', 'Pu Si Lung'], correct: 2 },
-            ]
-        }];
-        localStorage.setItem('quizmaker_quizzes', JSON.stringify(quizzes));
-    }
-    checkShareHash();
+    checkShareParam();
 });
